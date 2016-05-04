@@ -1,0 +1,486 @@
+---
+title: "Final Project - Seacoast's Wasted Votes"
+author: "Daniel Pontoh"
+date: "May 3, 2016"
+output: html_document
+code_folding: hide
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#####Introduction#####
+
+For my DATA210 Final Project I wanted to look @ the "wasted votes" and "efficiency gap" metrics in New Hampshire's Seacoast region for the State Representative General Elections in each legislative district.
+
+The political metric 'Wasted Votes' is the number of surplus votes for a candidate in an election that exceeds the total number of votes needed to win (which is 1 + half the total votes). The other metric 'efficiency gap' is the number of wasted votes divided by the total number of votes cast as a percentage.
+
+To do this project, I needed the election data for the target districts which I obtained from New Hampshire Public Radio's State of Democracy stats site "nh.electionstats.com". After putting all the data into a spreadsheet, I worked in R to add a few more data columns of calculations and data points, munge the data table, and to make the visualizations.
+
+IMPORTANT: Please read the disclaimer at the very bottom of the page. This exploration is far from perfect.
+
+
+```{r packages,warning=FALSE,message=FALSE}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+```
+
+#Calculations
+```{r datamung1, warning=FALSE,message=FALSE}
+#Data is from http://nh.electionstats.com/elections/view/48797/ to /48858
+
+#Put csv file into a dataframe
+results <- read_csv("data/electionresults.csv")
+
+#Make better column names
+colnames(results) <- c("id",
+                       "numb_dem_votes",
+                       "numb_rep_votes",
+                       "numb_ind_Votes",
+                       "numb_tot_votes",
+                       "seat_make_up",
+                       "contested",
+                       "numb_tot_seates",
+                       "numb_dem_cand",
+                       "numb_rep_cand",
+                       "numb_ind_cand")
+
+
+
+
+#To get the number of wasted votes for each district,
+#we need to see how many votes over the number of votes
+#needed to win the district there werefor each party.
+
+#(Party) Waste Votes =(total # of votes for a party)-(total number of votes cast/2)
+
+#Make column of wasted votes for democratic party
+results$numb_dem_waste <- results$numb_dem_votes - (results$numb_tot_votes/2)
+
+#Make column of wasted votes for republican party
+results$numb_rep_waste <- results$numb_rep_votes - (results$numb_tot_votes/2)
+
+
+#The Efficiency gap is the percentage wasted votes 
+#divided by the total number of votes
+#times 100.
+#Efficiency Gap = (party's waste votes / total votes) * 100
+
+#Get rid of negative numbers
+results <- mutate(results, numb_dem_waste2 = ifelse(numb_dem_waste < 0, 0, numb_dem_waste))
+
+results <- mutate(results, numb_rep_waste2 = ifelse(numb_rep_waste < 0, 0, numb_rep_waste))
+
+#Efficiency gap for democratic party
+results$dem_eff_gap <- 100 * (results$numb_dem_waste2 / results$numb_tot_votes)
+
+results$dem_eff_gap2 <- 100 * (results$numb_dem_waste / results$numb_tot_votes)
+
+
+#Efficiency gap for republican party
+results$rep_eff_gap <- 100 * (results$numb_rep_waste2 / results$numb_tot_votes)
+
+results$rep_eff_gap2 <- 100 * (results$numb_rep_waste / results$numb_tot_votes)
+
+
+
+#The Surplus is how much more votes
+#one party had than the other.
+#Surplus = Party 1's total votes - Party 2's total votes
+
+#Surplus votes for democratic party
+results$numb_dem_surplus <- (results$numb_dem_votes - results$numb_rep_votes)
+
+#Surplus votes for republican party
+results$numb_rep_surplus <- (results$numb_rep_votes - results$numb_dem_votes)
+
+#Make a dataframe of just the contested elections
+allcontestedracedata <- results[results$contested == TRUE,]
+str(results)
+
+```
+```{r csv, warning=FALSE, message=FALSE, error=FALSE}
+#I saved the new dataset into a .csv for sharing
+write_csv(results, path = "data/nhelectiondata.csv")
+```
+
+#Datamunging
+Code to clean up data.
+```{r datamunge}
+elec <- read_csv("data/nhelectiondata.csv")
+
+#Select columns of interest
+waste <- select(elec, id, numb_dem_waste, numb_rep_waste, contested)
+
+waste_long <- gather(waste, party, count, -id, -contested)
+
+waste_long <- filter(waste_long, count > 0)
+
+waste_long <- mutate(waste_long, count = ifelse(party == "numb_dem_waste", -count, count))
+
+waste_long <- mutate(waste_long, party = ifelse(party == "numb_dem_waste", "D", "R"))
+
+waste_long <- mutate(waste_long,
+                     count = as.integer(count))
+
+waste_long <- arrange(waste_long, count)
+
+waste_long <- mutate(waste_long,
+                     id=factor(id,
+                               levels=waste_long$id))
+
+waste_long <- mutate(waste_long,
+                     id=factor(id,
+                               levels=rev(waste_long$id)))
+
+waste_long <- mutate(waste_long,
+                     just = ifelse(party == "D", 0, 1))
+
+waste_long <- mutate(waste_long,
+                     lab=ifelse(sign(count)<0,
+                                sprintf("(%s) %s", comma(abs(count)), id),
+                                sprintf("%s (%s)", id, comma(abs(count)))))
+
+```
+
+
+
+#Wasted Votes
+For the barplots below, blue indicates democratic votes and red indicates republican votes.
+```{r wastedvotes, echo=FALSE, warning = FALSE, message = FALSE}
+fill_cols <- c(R="#b2182b", D="#2166ac")
+
+gg <- ggplot(waste_long, aes(id, count))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + geom_text(aes(y=-(sign(count)*100), label = lab, hjust = just), size = 2.25) # change id to lab
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title= "All Elections Wasted Votes (NH General State House 2014)")
+gg <- gg + theme_bw() 
+gg <- gg + theme(panel.grid.major.y = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(panel.border = element_blank())
+gg <- gg + theme(panel.background = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(axis.text=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg <- gg + coord_flip()
+gg
+
+fill_cols <- c(R="#b2182b", D="#2166ac")
+
+gg <- ggplot(waste_long[waste_long$contested == TRUE,], aes(id, count))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + geom_text(aes(y=-(sign(count)*100), label = lab, hjust = just), size = 2.25) # change id to lab
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title= "Opposed Election Wasted Votes (NH General State House 2014)")
+gg <- gg + theme_bw() 
+gg <- gg + theme(panel.grid.major.y = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(panel.border = element_blank())
+gg <- gg + theme(panel.background = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(axis.text=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg <- gg + coord_flip()
+gg
+```
+
+#Efficiency Gap (makes data relative)
+
+50% +/- 1-2% indicates an unopposed election.
+```{r effgap, echo=FALSE, warning = FALSE, message = FALSE}
+waste <- select(elec, id, dem_eff_gap, rep_eff_gap, contested)
+
+waste_long <- gather(waste, party, count, -id, -contested)
+
+waste_long <- filter(waste_long, count > 0)
+
+waste_long <- mutate(waste_long, count = ifelse(party == "dem_eff_gap", -count, count))
+
+waste_long <- mutate(waste_long, party = ifelse(party == "dem_eff_gap", "D", "R"))
+
+waste_long <- mutate(waste_long,
+                     count = round(count, digits = 1))
+
+waste_long <- arrange(waste_long, count)
+
+waste_long <- mutate(waste_long,
+                     id=factor(id,
+                               levels=waste_long$id))
+
+waste_long <- mutate(waste_long,
+                     id=factor(id,
+                               levels=rev(waste_long$id)))
+
+waste_long <- mutate(waste_long,
+                     just = ifelse(party == "D", 2.25, -1.25))
+
+#create label column,
+waste_long <- mutate(waste_long,
+                     lab=ifelse(sign(count)<0,
+                                sprintf("(%s) %s", paste(comma(abs(count)), "%"), id),
+                                sprintf("%s (%s)", id, paste(comma(abs(count)), "%", sep = ""))))
+
+
+fill_cols <- c(R="#b2182b", D="#2166ac")
+
+
+gg <- ggplot(waste_long, aes(id, count))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + geom_text(aes(y=-(sign(count)*100), label = lab, hjust = just), size = 2.25)
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Efficiency Gap in All Elections (NH General State House 2014)")
+gg <- gg + theme_bw() 
+gg <- gg + theme(panel.grid.major.y = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(panel.border = element_blank())
+gg <- gg + theme(panel.background = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(axis.text=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg <- gg + coord_flip()
+gg
+```
+
+
+```{r effgap2, echo=FALSE, warning = FALSE, message = FALSE}
+gg <- ggplot(waste_long[waste_long$contested == TRUE,], aes(id, count))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + geom_text(aes(y=-(sign(count)*100), label = lab, hjust = just), size = 2.25)
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Efficiency Gap In Opposed Elections(NH General State House 2014)")
+gg <- gg + theme_bw() 
+gg <- gg + theme(panel.grid.major.y = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(panel.border = element_blank())
+gg <- gg + theme(panel.background = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(axis.text=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg <- gg + coord_flip()
+gg
+```
+
+#More Calculations + df's
+```{r calc, warning = FALSE, message = FALSE}
+republicandat <- c("R",
+                   as.integer(sum(results$numb_rep_waste[sign(results$numb_rep_waste) >= 1])),
+                   as.integer(sum(allcontestedracedata$numb_rep_waste[sign(allcontestedracedata$numb_rep_waste) >= 1])),
+                   as.integer((sum(results$numb_rep_waste[sign(results$numb_rep_waste) >=1])) - sum(allcontestedracedata$numb_rep_waste[sign(allcontestedracedata$numb_rep_waste) >= 1])),
+                   length(results$id[sign(results$numb_rep_waste) >= 1]),
+                   length(allcontestedracedata$id[sign(allcontestedracedata$numb_rep_waste) >= 1]),
+                   length(results$id[sign(results$numb_rep_waste) >= 1]) - length(allcontestedracedata$id[sign(allcontestedracedata$numb_rep_waste) >= 1]))
+
+democratdat <- c("D",
+                 as.integer(sum(results$numb_dem_waste[sign(results$numb_dem_waste) >=1])),
+                 as.integer(sum(allcontestedracedata$numb_dem_waste[sign(allcontestedracedata$numb_dem_waste) >= 1])),
+                 as.integer((sum(results$numb_dem_waste[sign(results$numb_dem_waste) >=1])) - sum(allcontestedracedata$numb_dem_waste[sign(allcontestedracedata$numb_dem_waste) >= 1])),
+                 length(results$id[sign(results$numb_dem_waste) >= 1]),
+                 length(allcontestedracedata$id[sign(allcontestedracedata$numb_dem_waste) >= 1]),
+                 length(results$id[sign(results$numb_dem_waste) >= 1]) - length(allcontestedracedata$id[sign(allcontestedracedata$numb_dem_waste) >= 1]))
+
+republicandat <- t(republicandat)
+democratdat <- t(democratdat)
+
+bigpic <- rbind(republicandat, democratdat)
+
+colnames(bigpic) <- c("party", "total_waste", "total_waste_contested", "total_waste_diff", "all_districts_won", "only_districts_won", "uncontested_districts")
+
+bigpic <- data.frame(bigpic)
+```
+
+#Democrat vs. Republican 
+```{r morevis, echo=FALSE, warning = FALSE, message = FALSE}
+gg <- ggplot(bigpic, aes(party, all_districts_won))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Number of Districts Won")
+gg <- gg + theme_gray() 
+gg <- gg + theme(panel.grid.major.x = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg
+
+gg <- ggplot(bigpic, aes(party, uncontested_districts))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Number of Unopposed Districts Won")
+gg <- gg + theme_gray() 
+gg <- gg + theme(panel.grid.major.x = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg
+
+gg <- ggplot(bigpic, aes(party, total_waste))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Total Wasted Votes - All Elections")
+gg <- gg + theme_gray() 
+gg <- gg + theme(panel.grid.major.x = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg
+
+gg <- ggplot(bigpic, aes(party, total_waste_contested))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Total Wasted Votes - Only Opposed Elections")
+gg <- gg + theme_grey() 
+gg <- gg + theme(panel.grid.major.x = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg
+
+gg <- ggplot(bigpic, aes(party, total_waste_diff))
+gg <- gg + geom_bar(stat = "identity", aes(fill = party), color = "white")
+gg <- gg + scale_fill_manual(values= fill_cols)
+gg <- gg + labs(x = NULL, y = NULL,
+                title = "Difference Wasted Votes All vs. Only Opposed")
+gg <- gg + theme_grey() 
+gg <- gg + theme(panel.grid.major.x = element_blank())
+gg <- gg + theme(panel.grid.minor.x = element_blank())
+gg <- gg + theme(panel.grid.minor.y = element_blank())
+gg <- gg + theme(axis.ticks=element_blank())
+gg <- gg + theme(legend.position = "none")
+gg
+```
+
+#Maps
+```{r maps, echo=FALSE, warning = FALSE, message = FALSE}
+library(rgdal)
+library(sp)
+library(rgeos)
+library(maptools)
+library(ggmap)
+library(RColorBrewer)
+
+############################################
+########## Preparing the map data ##########
+############################################
+# Reads in NH .shp file with rgdal's readOGR
+
+nh <- suppressWarnings(
+  readOGR("data/cb_2014_33_sldl_500k",
+          "cb_2014_33_sldl_500k", stringsAsFactors=FALSE,
+          verbose=FALSE))
+
+#Orders nh spdf alphabetically by NAME
+nh <- nh[order(nh@data$NAME),]
+#Gets just Strafford and Rockingham counties
+nh <- nh[107:153,]
+
+#Prepares nh spdf for ggplot mapping
+nh_map <- fortify(nh, region = "NAME")
+
+#Fixes id column to match data
+nh_map$id <- gsub("County ", "", nh_map$id)
+
+############################################
+######### Preparing attribute data #########
+############################################
+# Read in county republican/democrat counts
+
+countydata <- results
+
+#Create a new spdf that incorporates data from countydata
+nh_map_with_data <- merge(nh_map, countydata, by = "id", all.x = TRUE)
+
+#Orders new data because that matters I think
+final_plot <- nh_map_with_data[order(nh_map_with_data$order),]
+
+
+```
+
+#The next two maps look at the concentration of voters and seats in each district.
+```{r moremaps}
+###########################################
+######### Generating the maps #############
+#########################################
+
+gg <- ggplot() + 
+  geom_polygon(data = final_plot,
+               aes(x = long, y = lat, group = group, fill = numb_tot_seates),
+               color = "white", size = 0.25) +
+  coord_map() +
+  scale_fill_distiller(name = "# of Seats", palette = "Spectral", breaks = pretty_breaks(n = 5)) +
+  theme_nothing(legend = TRUE) +
+  labs(title = "State Representative Seat Density Seacoast NH") +
+  theme(legend.position = "bottom") +
+  theme(plot.title = element_text(face = "bold", hjust= 0.5))
+gg
+
+
+gg <- ggplot() + 
+  geom_polygon(data = final_plot,
+               aes(x = long, y = lat, group = group, fill = numb_tot_votes),
+               color = "white", size = 0.25) +
+  coord_map() +
+  scale_fill_distiller(name = "# of Votes", palette = "Spectral", breaks = pretty_breaks(n = 5)) +
+  theme_nothing(legend = TRUE) +
+  labs(title = "State Representative Vote Density Seacoast NH") +
+  theme(legend.position = "bottom") +
+  theme(plot.title = element_text(face = "bold", hjust= 0.5)) +
+  scale_size_area(max_size = 100)
+gg
+```
+
+#This map shows where the greatest efficiency gaps are.
+-The red/orange indicates a positive republican efficiency gap.
+-The white/blue indicates a positive democratic efficiency gap.
+```{r mapseffgap}
+gg <- ggplot() + 
+  geom_polygon(data = final_plot,
+               aes(x = long, y = lat, group = group, fill = rep_eff_gap2),
+               color = "white", size = 0.25) +
+  coord_map() +
+  scale_fill_distiller(name = "Gap", palette = "RdBu", breaks = pretty_breaks(n = 5)) +
+  theme_nothing(legend = TRUE) +
+  labs(title = "Efficiency Gap Seacoast NH") +
+  theme(legend.position = "bottom") +
+  theme(plot.title = element_text(face = "bold", hjust= 0.5))
+gg
+
+```
+
+#####Disclaimers#####
+
+- I have no credentials that qualify me to be a political scientist/analyst. I just did this because the data was public and I thought it would be cool to play with.
+
+- The metrics "wasted votes" and "efficiency gap" are typically used for head to head elections. So situations where a voter can only vote for one person. New Hampshire's State Representative General Elections can involve anywhere from one to ten seats up for grabs for a particular district so voters will vote for multiple candidates in an election.
+
+- After thorough consideration, I don't know if there is a best way to get the political metrics other than trying multiple approaches.
+
+- My approach takes the total number of votes for each party for a district and pits them against each other. It does not take into consideration the number of candidates running or how many candidates of each party are running. This becomes a problem when you have unbalanced contests such as Derry which had 10 seats up for grabs but had 10 Republicans run and 4 Democrats run. Another problem would be a case like Strafford 17 where there were 3 seats up for grabs but 1 republican won and 2 democrats won.
+
+#####References#####
+1) Inspiration for project - http://nhpr.org/post/new-hampshire-shifts-swing-state-why-do-legislative-lines-still-favor-republicans
+
+2) Data came from - http://www.nh.electionstats.com
+
+3) Wasted vote and efficiency gap definitions - https://newrepublic.com/article/118534/gerrymandering-efficiency-gap-better-way-measure-gerrymandering
+
